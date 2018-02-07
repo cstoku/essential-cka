@@ -45,7 +45,7 @@ githubのリリースから特定のバージョンを落として展開
 
 ### cfsslでCAを作る
 
-```sh
+```bash
 mkdir -p /etc/cfssl/ca; cd /etc/cfssl/ca
 ```
 
@@ -108,7 +108,7 @@ mkdir -p /etc/cfssl/ca; cd /etc/cfssl/ca
 }
 ```
 
-```sh
+```bash
 cfssl gencert -initca ca-csr.json | cfssljson -bare ca -
 ```
 
@@ -116,7 +116,7 @@ cfssl gencert -initca ca-csr.json | cfssljson -bare ca -
 
 #### 証明書作る
 
-```sh
+```bash
 mkdir -p /etc/cfssl/server/etcd; cd /etc/cfssl/server/etcd
 ```
 
@@ -138,7 +138,7 @@ mkdir -p /etc/cfssl/server/etcd; cd /etc/cfssl/server/etcd
 }
 ```
 
-```sh
+```bash
 cfssl gencert -ca=/etc/cfssl/ca/ca.pem -ca-key=/etc/cfssl/ca/ca-key.pem -config=/etc/cfssl/ca/ca-config.json -profile=server server.json | \
 cfssljson -bare server
 ```
@@ -147,7 +147,7 @@ cfssljson -bare server
 
 /etc/etcd.yml
 
-```yml
+```yaml
 name: k8s-test-cluster
 data-dir: /var/lib/etcd/k8s-test-cluster
 advertise-client-urls: https://10.146.0.3:2379,https://127.0.0.1:2379
@@ -159,7 +159,7 @@ client-transport-security:
   trusted-ca-file: /etc/cfssl/ca/ca.pem
 ```
 
-```sh
+```bash
 useradd -M etcd
 mkdir -p /var/lib/etcd/k8s-test-cluster
 chown -R etcd /var/lib/etcd /etc/cfssl/server/etcd
@@ -185,7 +185,7 @@ LimitNOFILE=40000
 WantedBy=multi-user.target
 ```
 
-```sh
+```bash
 systemctl daemon-reload && systemctl start etcd
 etcdctl --endpoints https://127.0.0.1:2379 --ca-file /etc/cfssl/ca/ca.pem set /coreos.com/network/config << EOF
 {
@@ -205,7 +205,7 @@ EOF
 
 #### 証明書作る
 
-```sh
+```bash
 mkdir -p /etc/cfssl/server/kube-apiserver; cd /etc/cfssl/server/kube-apiserver
 ```
 
@@ -227,7 +227,7 @@ mkdir -p /etc/cfssl/server/kube-apiserver; cd /etc/cfssl/server/kube-apiserver
 }
 ```
 
-```sh
+```bash
 cfssl gencert -ca=/etc/cfssl/ca/ca.pem -ca-key=/etc/cfssl/ca/ca-key.pem -config=/etc/cfssl/ca/ca-config.json -profile=server server.json | \
 cfssljson -bare server
 chown -R kube /etc/cfssl/server/kube-apiserver
@@ -235,7 +235,7 @@ chown -R kube /etc/cfssl/server/kube-apiserver
 
 #### その他設定
 
-```sh
+```bash
 useradd -M kube
 mkdir -p /run/kubernetes /var/lib/kube-apiserver
 touch /var/lib/kube-apiserver/known_tokens.csv
@@ -276,7 +276,7 @@ WantedBy=multi-user.target
 
 /run/kubernetes/config.env
 
-```
+```bash
 ###
 # kubernetes system config
 #
@@ -303,7 +303,7 @@ KUBE_MASTER="--master=https://127.0.0.1:6443"
 
 /run/kubernetes/apiserver.env
 
-```
+```bash
 ###
 # kubernetes system config
 #
@@ -329,15 +329,19 @@ KUBE_SERVICE_ADDRESSES="--service-cluster-ip-range=172.16.240.0/20"
 KUBE_ADMISSION_CONTROL="--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,MutatingAdmissionWebhook,ValidatingAdmissionWebhook,ResourceQuota"
 
 # Add your own!
-KUBE_API_ARGS="--token-auth-file=/var/lib/kube-apiserver/known_tokens.csv --tls-ca-file /etc/cfssl/ca/ca.pem --tls-cert-file /etc/cfssl/server/kube-apiserver/server.pem --tls-private-key-file /etc/cfssl/server/kube-apiserver/server-key.pem"
+KUBE_API_ARGS= \
+    --token-auth-file /var/lib/kube-apiserver/known_tokens.csv \
+    --tls-ca-file /etc/cfssl/ca/ca.pem \
+    --tls-cert-file /etc/cfssl/server/kube-apiserver/server.pem \
+    --tls-private-key-file /etc/cfssl/server/kube-apiserver/server-key.pem
 ```
 
 ### kube-controller-manager
 
-```sh
+```bash
 mkdir -p /var/lib/kube-controller-manager
 TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo "$TOKEN,controller-manager,1" >> /var/lib/kube-apiserver/known_tokens.csv
+echo "$TOKEN,system:kube-controller-manager,1,\"system:masters\"" >> /var/lib/kube-apiserver/known_tokens.csv
 kubectl config --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
     set-cluster k8s-test-cluster \
     --certificate-authority=/etc/cfssl/ca/ca.pem \
@@ -354,6 +358,8 @@ kubectl config  --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
     use-context controller-manager-context
 chown -R kube /var/lib/kube-controller-manager
 ```
+
+- [ ] `system:kube-controller-manager` に `system:masters` グループがついてるのはなぜか権限エラーになるため。(適当処置)
 
 /etc/systemd/system/kube-controller-manager
 
@@ -392,10 +398,10 @@ KUBE_CONTROLLER_MANAGER_ARGS="--kubeconfig /var/lib/kube-controller-manager/kube
 
 ### kube-scheduler
 
-```sh
+```bash
 mkdir -p /var/lib/kube-scheduler
 TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo "$TOKEN,scheduler,2" >> /var/lib/kube-apiserver/known_tokens.csv
+echo "$TOKEN,system:kube-scheduler,2" >> /var/lib/kube-apiserver/known_tokens.csv
 kubectl config --kubeconfig /var/lib/kube-scheduler/kubeconfig \
     set-cluster k8s-test-cluster \
     --certificate-authority=/etc/cfssl/ca/ca.pem \
@@ -438,7 +444,7 @@ WantedBy=multi-user.target
 
 /run/kubernetes/scheduler.env
 
-```
+```bash
 ###
 # kubernetes scheduler config
 
@@ -450,18 +456,18 @@ KUBE_SCHEDULER_ARGS="--kubeconfig /var/lib/kube-scheduler/kubeconfig"
 
 ### kubelet,kube-proxy用Tokenの作成
 
-```sh
+```bash
 TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo "$TOKEN,node,3" >> /var/lib/kube-apiserver/known_tokens.csv
+echo "$TOKEN,kubelet-bootstrap,3,\"system:bootstrappers\"" >> /var/lib/kube-apiserver/known_tokens.csv
 TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo "$TOKEN,proxy,4" >> /var/lib/kube-apiserver/known_tokens.csv
+echo "$TOKEN,kube-proxy,4" >> /var/lib/kube-apiserver/known_tokens.csv
 TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo "$TOKEN,client,5" >> /var/lib/kube-apiserver/known_tokens.csv
+echo "$TOKEN,kube-admin,5,\"system:masters\"" >> /var/lib/kube-apiserver/known_tokens.csv
 ```
 
 ### 色々起動
 
-```sh
+```bash
 systemctl daemon-reload
 systemctl start kube-apiserver kube-controller-manager kube-scheduler
 ```
@@ -509,13 +515,13 @@ systemctl start kube-apiserver kube-controller-manager kube-scheduler
 
 ### flannel
 
-```sh
+```bash
 mkdir -p /run/flannel
 ```
 
 /run/flannel/options.env
 
-```
+```bash
 FLANNELD_ETCD_ENDPOINTS=https://10.146.0.3:2379
 FLANNELD_ETCD_CAFILE=/etc/cfssl/ca/ca.pem
 ```
@@ -545,13 +551,13 @@ ExecStart=/usr/local/bin/flanneld
 WantedBy=multi-user.target
 ```
 
-```sh
+```bash
 systemctl daemon-reload && systemctl start flanneld
 ```
 
 ### docker
 
-```sh
+```bash
 apt update
 apt install \
     apt-transport-https \
@@ -583,7 +589,7 @@ ExecStart=
 ExecStart=/usr/bin/dockerd -H fd:// $DOCKER_OPTS
 ```
 
-```sh
+```bash
 systemctl daemon-reload && systemctl restart docker
 ```
 
@@ -591,7 +597,7 @@ systemctl daemon-reload && systemctl restart docker
 
 TOKENにkubelet用に生成したトークンをセット。
 
-```sh
+```bash
 useradd -M kube
 mkdir -p /var/lib/kubelet /run/kubernetes
 kubectl config --kubeconfig /var/lib/kubelet/kubeconfig \
@@ -615,7 +621,7 @@ chown -R kube /var/lib/kubelet
 
 `--address` と `--hostname-override` は適宜変更
 
-```
+```bash
 ###
 # kubernetes kubelet (minion) config
 
@@ -634,7 +640,7 @@ KUBELET_ARGS="--cni-bin-dir /usr/local/bin --kubeconfig /var/lib/kubelet/kubecon
 
 /run/kubernetes/config.env
 
-```
+```bash
 ###
 # kubernetes system config
 #
@@ -688,7 +694,7 @@ KillMode=process
 WantedBy=multi-user.target
 ```
 
-```sh
+```bash
 systemctl daemon-reload && systemctl restart kubelet
 ```
 
@@ -696,7 +702,7 @@ systemctl daemon-reload && systemctl restart kubelet
 
 TOKENにkube-proxy用に生成したトークンをセット。
 
-```sh
+```bash
 mkdir -p /var/lib/kube-proxy
 kubectl config --kubeconfig /var/lib/kube-proxy/kubeconfig \
     set-cluster k8s-test-cluster \
@@ -740,7 +746,7 @@ WantedBy=multi-user.target
 
 /run/kubernetes/proxy.env
 
-```
+```bash
 ###
 # kubernetes proxy config
 
@@ -750,7 +756,7 @@ WantedBy=multi-user.target
 KUBE_PROXY_ARGS="--kubeconfig /var/lib/kube-proxy/kubeconfig"
 ```
 
-```sh
+```bash
 systemctl daemon-reload && systemctl restart kube-proxy
 ```
 
@@ -778,25 +784,32 @@ githubのリリースから特定のバージョンを落として展開
 
 TOKENにkubectl用に生成したトークンをセット。
 
-```sh
+```bash
 kubectl config set-cluster k8s-test-cluster \
     --certificate-authority=/etc/cfssl/ca/ca.pem \
     --embed-certs=true \
     --server=https://10.146.0.3:6443
-kubectl config set-credentials client \
+kubectl config set-credentials admin \
     --token=$TOKEN
-kubectl config set-context client-context \
+kubectl config set-context admin-context \
     --cluster=k8s-test-cluster \
-    --user=client
-kubectl config use-context client-context
+    --user=admin
+kubectl config use-context admin-context
 ```
 
 ### テスト
 
-```sh
+```bash
 root@kube-client:~# kubectl get nodes
 NAME          STATUS    ROLES     AGE       VERSION
 kube-node-1   Ready     <none>    41m       v1.9.2
 kube-node-2   Ready     <none>    41m       v1.9.2
 kube-node-3   Ready     <none>    41m       v1.9.2
 ```
+
+# ToDo
+
+- [ ] kubeletをtokenベースのブートストラップ処理で起動してくる設定に置き換え
+- [ ] kube-dnsの構築
+- [ ] serviceのテスト
+- [ ] serviceの名前解決テスト(kube-dns)
