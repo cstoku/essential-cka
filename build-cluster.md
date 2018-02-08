@@ -776,7 +776,8 @@ KUBELET_ARGS= \
     --bootstrap-kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
     --kubeconfig /var/lib/kubelet/kubeconfig \
     --cluster-dns 172.16.255.254 \
-    --cluster-domain cluster.local
+    --cluster-domain cluster.local \
+    --rotate-certificates
 ```
 
 /run/kubernetes/config.env
