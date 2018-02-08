@@ -203,22 +203,95 @@ EOF
 
 ### kube-apiserver
 
+### cfsslでk8s用CAを作る
+
+```bash
+mkdir -p /etc/kubernetes/ca; cd /etc/kubernetes/ca
+```
+
+/etc/kubernetes/ca/ca-config.json
+
+```json
+{
+    "signing": {
+        "default": {
+            "expiry": "43800h"
+        },
+        "profiles": {
+            "server": {
+                "expiry": "43800h",
+                "usages": [
+                    "signing",
+                    "key encipherment",
+                    "server auth"
+                ]
+            },
+            "client": {
+                "expiry": "43800h",
+                "usages": [
+                    "signing",
+                    "key encipherment",
+                    "client auth"
+                ]
+            },
+            "peer": {
+                "expiry": "43800h",
+                "usages": [
+                    "signing",
+                    "key encipherment",
+                    "server auth",
+                    "client auth"
+                ]
+            }
+        }
+    }
+}
+```
+
+/etc/kubernetes/ca/ca-csr.json
+
+```json
+{
+    "CN": "kube-test-cluster k8s CA",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "US",
+            "L": "CA",
+            "ST": "San Francisco",
+            "OU": "kube-test-cluster k8s"
+        }
+    ]
+}
+```
+
+```bash
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca -
+```
+
 #### 証明書作る
 
 ```bash
-mkdir -p /etc/cfssl/server/kube-apiserver; cd /etc/cfssl/server/kube-apiserver
+mkdir -p /etc/kubernetes/server/kube-apiserver; cd /etc/kubernetes/server/kube-apiserver
 ```
 
 /etc/cfssl/server/kube-apiserver/server.json
 
 ```json
 {
-    "CN": "k8s-test-cluster",
+    "CN": "k8s-test-cluster k8s",
     "hosts": [
         "127.0.0.1",
         "localhost",
         "10.146.0.3",
-        "kube-master"
+        "kube-master",
+        "172.16.240.1",
+        "kubernetes",
+        "kubernetes.default",
+        "kubernetes.default.svc"
     ],
     "key": {
         "algo": "rsa",
@@ -228,9 +301,9 @@ mkdir -p /etc/cfssl/server/kube-apiserver; cd /etc/cfssl/server/kube-apiserver
 ```
 
 ```bash
-cfssl gencert -ca=/etc/cfssl/ca/ca.pem -ca-key=/etc/cfssl/ca/ca-key.pem -config=/etc/cfssl/ca/ca-config.json -profile=server server.json | \
+cfssl gencert -ca=/etc/kubernetes/ca/ca.pem -ca-key=/etc/kubernetes/ca/ca-key.pem -config=/etc/kubernetes/ca/ca-config.json -profile=server server.json | \
 cfssljson -bare server
-chown -R kube /etc/cfssl/server/kube-apiserver
+chown -R kube: /etc/kubernetes
 ```
 
 #### その他設定
@@ -331,9 +404,10 @@ KUBE_ADMISSION_CONTROL="--admission-control=NamespaceLifecycle,LimitRanger,Servi
 # Add your own!
 KUBE_API_ARGS= \
     --token-auth-file /var/lib/kube-apiserver/known_tokens.csv \
-    --tls-ca-file /etc/cfssl/ca/ca.pem \
-    --tls-cert-file /etc/cfssl/server/kube-apiserver/server.pem \
-    --tls-private-key-file /etc/cfssl/server/kube-apiserver/server-key.pem
+    --client-ca-file /etc/kubernetes/ca/ca.pem \
+    --tls-ca-file /etc/kubernetes/ca/ca.pem \
+    --tls-cert-file /etc/kubernetes/server/kube-apiserver/server.pem \
+    --tls-private-key-file /etc/kubernetes/server/kube-apiserver/server-key.pem
 ```
 
 ### kube-controller-manager
@@ -344,7 +418,7 @@ TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | d
 echo "$TOKEN,system:kube-controller-manager,1,\"system:masters\"" >> /var/lib/kube-apiserver/known_tokens.csv
 kubectl config --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
     set-cluster k8s-test-cluster \
-    --certificate-authority=/etc/cfssl/ca/ca.pem \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
     --embed-certs=true \
     --server=https://127.0.0.1:6443
 kubectl config --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
@@ -354,7 +428,7 @@ kubectl config --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
     set-context controller-manager-context \
     --cluster=k8s-test-cluster \
     --user=controller-manager
-kubectl config  --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
+kubectl config --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
     use-context controller-manager-context
 chown -R kube /var/lib/kube-controller-manager
 ```
@@ -386,14 +460,18 @@ WantedBy=multi-user.target
 
 /run/kubernetes/controller-manager.env
 
-```
+```bash
 ###
 # The following values are used to configure the kubernetes controller-manager
 
 # defaults from config and apiserver should be adequate
 
 # Add your own!
-KUBE_CONTROLLER_MANAGER_ARGS="--kubeconfig /var/lib/kube-controller-manager/kubeconfig"
+KUBE_CONTROLLER_MANAGER_ARGS= \
+    --kubeconfig /var/lib/kube-controller-manager/kubeconfig \
+    --cluster-signing-cert-file /etc/kubernetes/ca/ca.pem \
+    --cluster-signing-key-file /etc/kubernetes/ca/ca-key.pem \
+    --service-account-private-key-file /etc/kubernetes/server/kube-apiserver/server-key.pem
 ```
 
 ### kube-scheduler
@@ -404,7 +482,7 @@ TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | d
 echo "$TOKEN,system:kube-scheduler,2" >> /var/lib/kube-apiserver/known_tokens.csv
 kubectl config --kubeconfig /var/lib/kube-scheduler/kubeconfig \
     set-cluster k8s-test-cluster \
-    --certificate-authority=/etc/cfssl/ca/ca.pem \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
     --embed-certs=true \
     --server=https://127.0.0.1:6443
 kubectl config --kubeconfig /var/lib/kube-scheduler/kubeconfig \
@@ -472,6 +550,62 @@ systemctl daemon-reload
 systemctl start kube-apiserver kube-controller-manager kube-scheduler
 ```
 
+### ロールバインドをいくつか作成
+
+#### kubectl設定
+
+TOKENにkube-admin用のトークンをセット
+
+```bash
+kubectl config set-cluster k8s-test-cluster \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
+    --embed-certs=true \
+    --server=https://10.146.0.3:6443
+kubectl config set-credentials admin \
+    --token=$TOKEN
+kubectl config set-context admin-context \
+    --cluster=k8s-test-cluster \
+    --user=admin
+kubectl config use-context admin-context
+```
+
+#### ClusterRoleBindingの作成
+
+crb.yaml
+
+```yaml
+# Approve all CSRs for the group "system:bootstrappers"
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: auto-approve-csrs-for-group
+subjects:
+- kind: Group
+  name: system:bootstrappers
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: system:node-bootstrapper
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: node-client-cert-renewal
+subjects:
+- kind: Group
+  name: system:nodes
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: system:node
+  apiGroup: rbac.authorization.k8s.io
+```
+
+```bash
+kubectl apply -f crb.yaml
+```
+
 ## Node構築
 
 ### 取得と配置
@@ -511,7 +645,9 @@ systemctl start kube-apiserver kube-controller-manager kube-scheduler
 
 #### CA公開鍵
 
-マスターで作成したCAの公開鍵を各ノードの同じ場所に配置する
+マスターで作成したk8s用のCAの公開鍵を各ノードの同じ場所に配置する
+
+`/etc/kubernetes/ca/ca.pem` のこと。
 
 ### flannel
 
@@ -600,20 +736,20 @@ TOKENにkubelet用に生成したトークンをセット。
 ```bash
 useradd -M kube
 mkdir -p /var/lib/kubelet /run/kubernetes
-kubectl config --kubeconfig /var/lib/kubelet/kubeconfig \
+kubectl config --kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
     set-cluster k8s-test-cluster \
-    --certificate-authority=/etc/cfssl/ca/ca.pem \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
     --embed-certs=true \
     --server=https://10.146.0.3:6443
-kubectl config --kubeconfig /var/lib/kubelet/kubeconfig \
-    set-credentials node \
+kubectl config --kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
+    set-credentials kubelet-bootstrap \
     --token=$TOKEN
-kubectl config --kubeconfig /var/lib/kubelet/kubeconfig \
-    set-context node-context \
+kubectl config --kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
+    set-context kubelet-bootstrap-context \
     --cluster=k8s-test-cluster \
-    --user=node
-kubectl config  --kubeconfig /var/lib/kubelet/kubeconfig \
-    use-context node-context
+    --user=kubelet-bootstrap
+kubectl config  --kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
+    use-context kubelet-bootstrap-context
 chown -R kube /var/lib/kubelet
 ```
 
@@ -635,7 +771,12 @@ KUBELET_ADDRESS="--address=10.146.0.4"
 KUBELET_HOSTNAME="--hostname-override=kube-node-1"
 
 # Add your own!
-KUBELET_ARGS="--cni-bin-dir /usr/local/bin --kubeconfig /var/lib/kubelet/kubeconfig"
+KUBELET_ARGS= \
+    --cni-bin-dir /usr/local/bin \
+    --bootstrap-kubeconfig /var/lib/kubelet/bootstrap.kubeconfig \
+    --kubeconfig /var/lib/kubelet/kubeconfig \
+    --cluster-dns 172.16.255.254 \
+    --cluster-domain cluster.local
 ```
 
 /run/kubernetes/config.env
@@ -700,13 +841,21 @@ systemctl daemon-reload && systemctl restart kubelet
 
 ### kube-proxy
 
+#### 必要そうなpkgを入れる
+
+```bash
+apt install conntrack
+```
+
+#### 設定
+
 TOKENにkube-proxy用に生成したトークンをセット。
 
 ```bash
 mkdir -p /var/lib/kube-proxy
 kubectl config --kubeconfig /var/lib/kube-proxy/kubeconfig \
     set-cluster k8s-test-cluster \
-    --certificate-authority=/etc/cfssl/ca/ca.pem \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
     --embed-certs=true \
     --server=https://10.146.0.3:6443
 kubectl config --kubeconfig /var/lib/kube-proxy/kubeconfig \
@@ -780,13 +929,13 @@ githubのリリースから特定のバージョンを落として展開
 
 ### CA公開鍵
 
-マスターで作成したCAの公開鍵を各ノードの同じ場所に配置する
+マスターで作成したk8s用のCAの公開鍵を各ノードの同じ場所に配置する
 
 TOKENにkubectl用に生成したトークンをセット。
 
 ```bash
 kubectl config set-cluster k8s-test-cluster \
-    --certificate-authority=/etc/cfssl/ca/ca.pem \
+    --certificate-authority=/etc/kubernetes/ca/ca.pem \
     --embed-certs=true \
     --server=https://10.146.0.3:6443
 kubectl config set-credentials admin \
@@ -797,19 +946,57 @@ kubectl config set-context admin-context \
 kubectl config use-context admin-context
 ```
 
+#### 接続テスト
+
+```bash
+kubectl auth can-i get nodes
+```
+
+## 署名リクエストの承認
+
+```bash
+kubectl get csr -o yaml | kubectl certificate approve -f -
+```
+
+### NODEの確認
+
+```bash
+kubectl get nodes
+```
+
+## kube-dnsの構築
+
+```bash
+sed -e 's/__PILLAR__DNS__SERVER__/172.16.255.254/g' \
+    -e 's/__PILLAR__DNS__DOMAIN__/cluster.local/g' \
+    kubernetes/cluster/addons/dns/kube-dns.yaml.base | \
+kubectl apply -f -
+```
+
+(これが動作すればservice経由でAPIを蹴ってるのでserviceが正しく動作している)
+
 ### テスト
 
 ```bash
-root@kube-client:~# kubectl get nodes
-NAME          STATUS    ROLES     AGE       VERSION
-kube-node-1   Ready     <none>    41m       v1.9.2
-kube-node-2   Ready     <none>    41m       v1.9.2
-kube-node-3   Ready     <none>    41m       v1.9.2
+kubectl delete -f - << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: alpine
+spec:
+  containers:
+  - image: alpine
+    command:
+      - tail
+      - -f
+      - /dev/null
+    imagePullPolicy: IfNotPresent
+    name: alpine
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 0
+EOF
+kubectl exec alpine nslookup alpine 172.16.255.254
+kubectl exec alpine nslookup kubernetes 172.16.255.254
+kubectl exec alpine cat /etc/resolv.conf
+kubectl delete po/alpine
 ```
-
-# ToDo
-
-- [ ] kubeletをtokenベースのブートストラップ処理で起動してくる設定に置き換え
-- [ ] kube-dnsの構築
-- [ ] serviceのテスト
-- [ ] serviceの名前解決テスト(kube-dns)
