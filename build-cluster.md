@@ -611,6 +611,7 @@ kubectl apply -f crb.yaml
 ### 取得と配置
 
 - docker(pkgから)
+- socat(pkgから)
 - [kubenetes](https://github.com/kubernetes/kubernetes/releases): 1.9.2
 - [flannel](https://github.com/coreos/flannel/releases): 0.10.0
 - [cni](https://github.com/containernetworking/cni/releases): 0.6.0
@@ -648,6 +649,16 @@ kubectl apply -f crb.yaml
 マスターで作成したk8s用のCAの公開鍵を各ノードの同じ場所に配置する
 
 `/etc/kubernetes/ca/ca.pem` のこと。
+
+#### socat
+
+aptでインストール
+
+port-fowardにこいつが必要らしい
+
+```bash
+apt install socat
+```
 
 ### flannel
 
