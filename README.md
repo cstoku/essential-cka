@@ -17,14 +17,14 @@
   
 ## Resources
 
-- [ ] CronJob
-- [ ] DaemonSet
+- [x] CronJob
+- [x] DaemonSet
 - [ ] Deployment
-- [ ] Job
-- [ ] Pod
+- [x] Job
+- [x] Pod
 - [ ] ReplicaSet
 - [ ] ReplicationController
-- [ ] StatefulSet
+- [x] StatefulSet
 - [ ] Ingress
 - [ ] Service
 - [ ] ConfigMap
