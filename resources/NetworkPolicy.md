@@ -1,5 +1,5 @@
 
-# ConfigMap
+# NetworkPolicy
 
 https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.9/#networkpolicy-v1-networking
 
